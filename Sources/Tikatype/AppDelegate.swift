@@ -120,15 +120,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func accessibilitySelectedText() -> String? {
-        let sys = AXUIElementCreateSystemWide()
-        var focused: AnyObject?
-        guard AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let el = focused
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        var cfFocused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &cfFocused) == .success,
+              let focused = cfFocused
         else { return nil }
-        var sel: AnyObject?
-        guard AXUIElementCopyAttributeValue(el as! AXUIElement, kAXSelectedTextAttribute as CFString, &sel) == .success
+        let element = unsafeBitCast(focused, to: AXUIElement.self)
+        var cfSel: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &cfSel) == .success,
+              let sel = cfSel as? String,
+              !sel.isEmpty
         else { return nil }
-        return sel as? String
+        return sel
     }
 
     private func convertPhrase() {

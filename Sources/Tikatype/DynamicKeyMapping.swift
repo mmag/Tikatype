@@ -48,18 +48,26 @@ final class DynamicKeyMapping {
         return result
     }
 
-    /// Converts a string typed in `sourceLayout` to what it would produce in `targetLayout`
-    /// using the same physical keycodes.
+    /// Converts a string typed in `sourceLayout` to what it would produce in `targetLayout`.
+    /// Handles both unshifted and Shift-modified characters (upper case, symbols).
     static func convert(_ text: String,
                         from sourceLayout: TISInputSource,
                         to targetLayout: TISInputSource) -> String? {
-        let charToKey = charToKeyCode(for: sourceLayout)
+        // Build source map: char → (keyCode, modifiers), including Shift variants
+        var sourceMap: [Character: (CGKeyCode, CGEventFlags)] = [:]
+        for keyCode in CGKeyCode(0)..<CGKeyCode(128) {
+            for mods: CGEventFlags in [[], .maskShift] {
+                if let s = character(forKeyCode: keyCode, modifiers: mods, layout: sourceLayout),
+                   s.count == 1, sourceMap[s.first!] == nil {
+                    sourceMap[s.first!] = (keyCode, mods)
+                }
+            }
+        }
         var result = ""
         for ch in text {
-            guard let keyCode = charToKey[ch],
-                  let converted = character(forKeyCode: keyCode, modifiers: [], layout: targetLayout) else {
-                return nil
-            }
+            guard let (keyCode, mods) = sourceMap[ch],
+                  let converted = character(forKeyCode: keyCode, modifiers: mods, layout: targetLayout)
+            else { return nil }
             result += converted
         }
         return result
