@@ -43,6 +43,38 @@ final class TextConverter {
         }
     }
 
+    /// Tries to convert the current selection via Cmd+C; if the clipboard didn't change
+    /// (nothing was selected), falls back to converting the last word from the buffer.
+    static func convertSelectionOrWord(buffer: PhraseBuffer,
+                                       from current: TISInputSource,
+                                       to target: TISInputSource) {
+        let pb          = NSPasteboard.general
+        let beforeCount = pb.changeCount
+        let savedText   = pb.string(forType: .string)
+
+        let src = CGEventSource(stateID: .hidSystemState)
+        postKey(8, modifiers: .maskCommand, source: src)  // Cmd+C
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            if pb.changeCount != beforeCount,
+               let copied = pb.string(forType: .string), !copied.isEmpty,
+               let converted = DynamicKeyMapping.convert(copied, from: current, to: target) {
+                pb.clearContents()
+                pb.setString(converted, forType: .string)
+                postKey(9, modifiers: .maskCommand, source: src)  // Cmd+V
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    pb.clearContents()
+                    if let savedText { pb.setString(savedText, forType: .string) }
+                }
+            } else {
+                // Nothing was selected — restore clipboard and convert last word
+                pb.clearContents()
+                if let savedText { pb.setString(savedText, forType: .string) }
+                replaceWord(buffer: buffer, switchingTo: target)
+            }
+        }
+    }
+
     /// Copies the current text selection, converts layout, and pastes back.
     /// Uses Cmd+C / Cmd+V — does not rely on buffer.
     static func convertSelected(from current: TISInputSource, to target: TISInputSource) {

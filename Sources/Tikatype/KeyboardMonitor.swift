@@ -19,8 +19,9 @@ final class KeyboardMonitor {
     private var lastOptionReleaseDate: Date?
     private static let doubleOptInterval: TimeInterval = 0.4
 
-    // Ctrl+Shift: fire on transition into (Ctrl ∧ Shift ∧ ¬Cmd ∧ ¬Opt)
+    // Ctrl+Shift: fire when both keys are fully RELEASED after being pressed together
     private var prevFlags: CGEventFlags = []
+    private var ctrlShiftPending = false
 
     private static let wordSeparators: Set<CGKeyCode> = [49, 48]  // Space, Tab
 
@@ -133,13 +134,16 @@ final class KeyboardMonitor {
         }
         optionIsDown = optNow
 
-        // Ctrl+Shift
-        let csNow  = flags.contains(.maskControl) && flags.contains(.maskShift)
+        // Ctrl+Shift: arm on press, fire on full release (so Cmd+C/V go out with no modifiers held)
+        let csNow = flags.contains(.maskControl) && flags.contains(.maskShift)
             && !flags.contains(.maskCommand) && !flags.contains(.maskAlternate)
-        let csPrev = prevFlags.contains(.maskControl) && prevFlags.contains(.maskShift)
-            && !prevFlags.contains(.maskCommand) && !prevFlags.contains(.maskAlternate)
 
-        if csNow && !csPrev { onConvertWord?() }
+        if csNow { ctrlShiftPending = true }
+
+        if ctrlShiftPending && !flags.contains(.maskControl) && !flags.contains(.maskShift) {
+            ctrlShiftPending = false
+            onConvertWord?()
+        }
 
         prevFlags = flags
     }

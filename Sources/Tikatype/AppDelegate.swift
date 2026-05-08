@@ -112,11 +112,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func convertWord() {
         guard let target = targetLayout() else { return }
+        let current = LayoutManager.currentLayout
+
+        // Fast path: AX gives us the selected text directly (works in native apps)
         if let selected = accessibilitySelectedText(), !selected.isEmpty {
-            TextConverter.pasteConverted(selected, from: LayoutManager.currentLayout, to: target)
-        } else {
-            TextConverter.replaceWord(buffer: buffer, switchingTo: target)
+            TextConverter.pasteConverted(selected, from: current, to: target)
+            return
         }
+
+        // Fallback: Cmd+C → detect clipboard change → convert → Cmd+V
+        // At this point Ctrl+Shift are already released (we fire on release),
+        // so the synthetic shortcuts arrive clean.
+        TextConverter.convertSelectionOrWord(buffer: buffer, from: current, to: target)
     }
 
     private func accessibilitySelectedText() -> String? {
@@ -129,8 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let element = unsafeBitCast(focused, to: AXUIElement.self)
         var cfSel: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &cfSel) == .success,
-              let sel = cfSel as? String,
-              !sel.isEmpty
+              let sel = cfSel as? String, !sel.isEmpty
         else { return nil }
         return sel
     }
