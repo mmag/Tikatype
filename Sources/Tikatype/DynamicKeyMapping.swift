@@ -73,6 +73,40 @@ final class DynamicKeyMapping {
         return result
     }
 
+    /// Converts each character from whichever layout it belongs to, to the other layout.
+    /// Characters not found in either layout are passed through unchanged.
+    static func convertBidirectional(_ text: String,
+                                     layout1: TISInputSource,
+                                     layout2: TISInputSource) -> String {
+        var map1: [Character: (CGKeyCode, CGEventFlags)] = [:]
+        var map2: [Character: (CGKeyCode, CGEventFlags)] = [:]
+        for keyCode in CGKeyCode(0)..<CGKeyCode(128) {
+            for mods: CGEventFlags in [[], .maskShift] {
+                if let s = character(forKeyCode: keyCode, modifiers: mods, layout: layout1),
+                   s.count == 1, map1[s.first!] == nil {
+                    map1[s.first!] = (keyCode, mods)
+                }
+                if let s = character(forKeyCode: keyCode, modifiers: mods, layout: layout2),
+                   s.count == 1, map2[s.first!] == nil {
+                    map2[s.first!] = (keyCode, mods)
+                }
+            }
+        }
+        var result = ""
+        for ch in text {
+            if let (keyCode, mods) = map1[ch],
+               let converted = character(forKeyCode: keyCode, modifiers: mods, layout: layout2) {
+                result += converted
+            } else if let (keyCode, mods) = map2[ch],
+                      let converted = character(forKeyCode: keyCode, modifiers: mods, layout: layout1) {
+                result += converted
+            } else {
+                result.append(ch)
+            }
+        }
+        return result
+    }
+
     // MARK: - Private
 
     private static func modifiersToCocoaFlags(_ flags: CGEventFlags) -> UInt64 {

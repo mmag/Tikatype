@@ -13,6 +13,7 @@ final class KeyboardMonitor {
 
     var onConvertWord: (() -> Void)?
     var onConvertPhrase: (() -> Void)?
+    var onConvertSelection: (() -> Void)?
 
     // Double-Option: press → release → press (no keyDown between) within threshold
     private var optionIsDown = false
@@ -22,6 +23,9 @@ final class KeyboardMonitor {
     // Ctrl+Shift: fire when both keys are fully RELEASED after being pressed together
     private var prevFlags: CGEventFlags = []
     private var ctrlShiftPending = false
+
+    // Opt+Shift: same fire-on-release pattern
+    private var optShiftPending = false
 
     private static let wordSeparators: Set<CGKeyCode> = [49, 48]  // Space, Tab
 
@@ -100,8 +104,10 @@ final class KeyboardMonitor {
             return
         }
 
+        let currentLayoutID = LayoutManager.sourceID(of: LayoutManager.currentLayout)
+
         if Self.wordSeparators.contains(keyCode) {
-            buffer.append(KeyStroke(keyCode: keyCode, modifiers: modifiers, isSeparator: true))
+            buffer.append(KeyStroke(keyCode: keyCode, modifiers: modifiers, isSeparator: true, layoutID: currentLayoutID))
             return
         }
 
@@ -110,7 +116,7 @@ final class KeyboardMonitor {
                                              layout: LayoutManager.currentLayout)
         if let ch, "!.?".contains(ch) { buffer.clear(); return }
 
-        buffer.append(KeyStroke(keyCode: keyCode, modifiers: modifiers, isSeparator: false))
+        buffer.append(KeyStroke(keyCode: keyCode, modifiers: modifiers, isSeparator: false, layoutID: currentLayoutID))
     }
 
     // MARK: - Modifier-key hotkeys
@@ -143,6 +149,18 @@ final class KeyboardMonitor {
         if ctrlShiftPending && !flags.contains(.maskControl) && !flags.contains(.maskShift) {
             ctrlShiftPending = false
             onConvertWord?()
+        }
+
+        // Opt+Ctrl: arm on press, fire on full release, clear double-opt window to avoid false trigger
+        let osNow = flags.contains(.maskAlternate) && flags.contains(.maskControl)
+            && !flags.contains(.maskCommand) && !flags.contains(.maskShift)
+
+        if osNow { optShiftPending = true }
+
+        if optShiftPending && !flags.contains(.maskAlternate) && !flags.contains(.maskControl) {
+            optShiftPending = false
+            lastOptionReleaseDate = nil
+            onConvertSelection?()
         }
 
         prevFlags = flags

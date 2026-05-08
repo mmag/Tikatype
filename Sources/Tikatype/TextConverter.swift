@@ -9,75 +9,66 @@ final class TextConverter {
 
     private static let backspaceKeyCode: CGKeyCode = 51
 
-    /// Converts the last typed word in the buffer to targetLayout.
-    /// Erases it with backspaces, switches layout, retypes the same physical keys.
-    static func replaceWord(buffer: PhraseBuffer, switchingTo targetLayout: TISInputSource) {
+    /// Converts the last typed word in the buffer to the opposite layout,
+    /// determined by the per-stroke layoutID. Pastes result and switches layout.
+    static func replaceWord(buffer: PhraseBuffer,
+                            layout1: TISInputSource,
+                            layout2: TISInputSource) {
         let wordStrokes = buffer.currentWordStrokes
         let sepStrokes  = buffer.trailingSeparatorStrokes
         let eraseCount  = wordStrokes.count + sepStrokes.count
         guard eraseCount > 0 else { return }
 
+        let id1 = LayoutManager.sourceID(of: layout1)
+        let converted = strokesToConverted(wordStrokes, id1: id1, layout1: layout1, layout2: layout2)
+                      + strokesToConverted(sepStrokes,  id1: id1, layout1: layout1, layout2: layout2)
+
+        let wordLayoutID = wordStrokes.first?.layoutID
+        let targetLayout = (wordLayoutID != nil && wordLayoutID == id1) ? layout2 : layout1
+
         buffer.clear()
-        LayoutManager.switchTo(targetLayout)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             let src = CGEventSource(stateID: .hidSystemState)
             for _ in 0..<eraseCount { postKey(backspaceKeyCode, source: src) }
-            for s in wordStrokes    { postKey(s.keyCode, modifiers: s.modifiers, source: src) }
-            for s in sepStrokes     { postKey(s.keyCode, modifiers: s.modifiers, source: src) }
-        }
-    }
-
-    /// Converts everything accumulated in the buffer (since last sentence break) to targetLayout.
-    static func replacePhrase(buffer: PhraseBuffer, switchingTo targetLayout: TISInputSource) {
-        let strokes = buffer.strokes
-        guard !strokes.isEmpty else { return }
-
-        buffer.clear()
-        LayoutManager.switchTo(targetLayout)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            let src = CGEventSource(stateID: .hidSystemState)
-            for _ in 0..<strokes.count { postKey(backspaceKeyCode, source: src) }
-            for s in strokes           { postKey(s.keyCode, modifiers: s.modifiers, source: src) }
-        }
-    }
-
-    /// Tries to convert the current selection via Cmd+C; if the clipboard didn't change
-    /// (nothing was selected), falls back to converting the last word from the buffer.
-    static func convertSelectionOrWord(buffer: PhraseBuffer,
-                                       from current: TISInputSource,
-                                       to target: TISInputSource) {
-        let pb          = NSPasteboard.general
-        let beforeCount = pb.changeCount
-        let savedText   = pb.string(forType: .string)
-
-        let src = CGEventSource(stateID: .hidSystemState)
-        postKey(8, modifiers: .maskCommand, source: src)  // Cmd+C
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            if pb.changeCount != beforeCount,
-               let copied = pb.string(forType: .string), !copied.isEmpty,
-               let converted = DynamicKeyMapping.convert(copied, from: current, to: target) {
-                pb.clearContents()
-                pb.setString(converted, forType: .string)
-                postKey(9, modifiers: .maskCommand, source: src)  // Cmd+V
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    pb.clearContents()
-                    if let savedText { pb.setString(savedText, forType: .string) }
-                }
-            } else {
-                // Nothing was selected — restore clipboard and convert last word
-                pb.clearContents()
-                if let savedText { pb.setString(savedText, forType: .string) }
-                replaceWord(buffer: buffer, switchingTo: target)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                pasteString(converted)
+                LayoutManager.switchTo(targetLayout)
             }
         }
     }
 
-    /// Copies the current text selection, converts layout, and pastes back.
-    /// Uses Cmd+C / Cmd+V — does not rely on buffer.
-    static func convertSelected(from current: TISInputSource, to target: TISInputSource) {
+    /// Converts everything accumulated in the buffer since the last sentence break.
+    /// Each keystroke is converted to the OPPOSITE of the layout it was typed in.
+    static func replacePhrase(buffer: PhraseBuffer,
+                               layout1: TISInputSource,
+                               layout2: TISInputSource) {
+        let strokes = buffer.strokes
+        guard !strokes.isEmpty else { return }
+
+        let id1 = LayoutManager.sourceID(of: layout1)
+        let converted = strokesToConverted(strokes, id1: id1, layout1: layout1, layout2: layout2)
+
+        let lastLayoutID = strokes.last(where: { !$0.isSeparator })?.layoutID ?? strokes.last?.layoutID
+        let targetLayout = (lastLayoutID != nil && lastLayoutID == id1) ? layout2 : layout1
+
+        let eraseCount = strokes.count
+        buffer.clear()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            let src = CGEventSource(stateID: .hidSystemState)
+            for _ in 0..<eraseCount { postKey(backspaceKeyCode, source: src) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                pasteString(converted)
+                LayoutManager.switchTo(targetLayout)
+            }
+        }
+    }
+
+    /// Copies the current text selection, converts layout bidirectionally, and pastes back.
+    /// Used by the menu item / ⌥⌃ hotkey — does not rely on the buffer.
+    static func convertSelected(layout1: TISInputSource, layout2: TISInputSource,
+                                 switchTo targetLayout: TISInputSource) {
         let pasteboard = NSPasteboard.general
         let saved      = pasteboard.string(forType: .string)
 
@@ -85,14 +76,12 @@ final class TextConverter {
         postKey(8, modifiers: .maskCommand, source: src)  // Cmd+C
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            guard let text      = pasteboard.string(forType: .string), !text.isEmpty,
-                  let converted = DynamicKeyMapping.convert(text, from: current, to: target)
-            else { return }
-
+            guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
+            let converted = DynamicKeyMapping.convertBidirectional(text, layout1: layout1, layout2: layout2)
             pasteboard.clearContents()
             pasteboard.setString(converted, forType: .string)
             postKey(9, modifiers: .maskCommand, source: src)  // Cmd+V
-
+            LayoutManager.switchTo(targetLayout)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 pasteboard.clearContents()
                 if let saved { pasteboard.setString(saved, forType: .string) }
@@ -100,16 +89,42 @@ final class TextConverter {
         }
     }
 
-    /// Converts `text` and pastes it, replacing the current selection.
+    /// Converts `text` bidirectionally, pastes it, and switches layout.
     /// Used when the caller already has the selected text (e.g. from Accessibility API).
     static func pasteConverted(_ text: String,
-                               from current: TISInputSource,
-                               to target: TISInputSource) {
-        guard let converted = DynamicKeyMapping.convert(text, from: current, to: target) else { return }
+                                layout1: TISInputSource,
+                                layout2: TISInputSource,
+                                switchTo targetLayout: TISInputSource) {
+        let converted = DynamicKeyMapping.convertBidirectional(text, layout1: layout1, layout2: layout2)
+        pasteString(converted)
+        LayoutManager.switchTo(targetLayout)
+    }
+
+    // MARK: - Private
+
+    private static func strokesToConverted(_ strokes: [KeyStroke],
+                                            id1: String?,
+                                            layout1: TISInputSource,
+                                            layout2: TISInputSource) -> String {
+        var result = ""
+        for s in strokes {
+            let isFromLayout1 = (s.layoutID != nil && s.layoutID == id1)
+            let tgtLayout = isFromLayout1 ? layout2 : layout1
+            let srcLayout = isFromLayout1 ? layout1 : layout2
+            if let ch = DynamicKeyMapping.character(forKeyCode: s.keyCode, modifiers: s.modifiers, layout: tgtLayout) {
+                result += ch
+            } else if let ch = DynamicKeyMapping.character(forKeyCode: s.keyCode, modifiers: s.modifiers, layout: srcLayout) {
+                result += ch
+            }
+        }
+        return result
+    }
+
+    private static func pasteString(_ text: String) {
         let pb    = NSPasteboard.general
         let saved = pb.string(forType: .string)
         pb.clearContents()
-        pb.setString(converted, forType: .string)
+        pb.setString(text, forType: .string)
         let src = CGEventSource(stateID: .hidSystemState)
         postKey(9, modifiers: .maskCommand, source: src)  // Cmd+V
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -117,8 +132,6 @@ final class TextConverter {
             if let saved { pb.setString(saved, forType: .string) }
         }
     }
-
-    // MARK: - Private
 
     private static func postKey(_ keyCode: CGKeyCode,
                                 modifiers: CGEventFlags = [],

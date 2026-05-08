@@ -4,7 +4,8 @@ import Foundation
 struct KeyStroke {
     let keyCode: CGKeyCode
     let modifiers: CGEventFlags
-    let isSeparator: Bool  // space or tab — word boundary inside phrase
+    let isSeparator: Bool   // space or tab — word boundary inside phrase
+    let layoutID: String?   // TIS source ID of the layout active when this key was pressed
 }
 
 /// Accumulates keystrokes since the last sentence terminator (. ! ? \n).

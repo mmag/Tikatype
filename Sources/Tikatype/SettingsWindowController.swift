@@ -74,7 +74,7 @@ final class SettingsWindowController: NSWindowController,
         root.addArrangedSubview(sectionHeader(L10n.settingsHotkeys))
         root.addArrangedSubview(hotkeyRow(L10n.settingsWord,      value: "Ctrl+Shift"))
         root.addArrangedSubview(hotkeyRow(L10n.settingsPhrase,    value: "⌥ ⌥"))
-        root.addArrangedSubview(hotkeyRow(L10n.settingsSelection, value: L10n.settingsMenuOnly))
+        root.addArrangedSubview(hotkeyRow(L10n.settingsSelection, value: "⌥⌃"))
         root.addArrangedSubview(separator())
 
         // Excluded apps

@@ -42,8 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupComponents() {
         monitor = KeyboardMonitor(buffer: buffer, settings: settings)
-        monitor.onConvertWord   = { [weak self] in self?.convertWord() }
-        monitor.onConvertPhrase = { [weak self] in self?.convertPhrase() }
+        monitor.onConvertWord      = { [weak self] in self?.convertWord() }
+        monitor.onConvertPhrase    = { [weak self] in self?.convertPhrase() }
+        monitor.onConvertSelection = { [weak self] in self?.convertSelectionAction() }
     }
 
     private func setupStatusBar() {
@@ -97,8 +98,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func convertSelectionAction() {
-        guard let target = targetLayout() else { return }
-        TextConverter.convertSelected(from: LayoutManager.currentLayout, to: target)
+        guard let (l1, l2) = layoutPair() else { return }
+        TextConverter.convertSelected(layout1: l1, layout2: l2, switchTo: oppositeLayout(l1, l2))
     }
 
     @objc private func appDidActivate(_ note: Notification) {
@@ -111,19 +112,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Conversion
 
     private func convertWord() {
-        guard let target = targetLayout() else { return }
-        let current = LayoutManager.currentLayout
+        guard let (l1, l2) = layoutPair() else { return }
 
-        // Fast path: AX gives us the selected text directly (works in native apps)
         if let selected = accessibilitySelectedText(), !selected.isEmpty {
-            TextConverter.pasteConverted(selected, from: current, to: target)
+            let target = oppositeLayout(l1, l2)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                TextConverter.pasteConverted(selected, layout1: l1, layout2: l2, switchTo: target)
+            }
             return
         }
 
-        // Fallback: Cmd+C → detect clipboard change → convert → Cmd+V
-        // At this point Ctrl+Shift are already released (we fire on release),
-        // so the synthetic shortcuts arrive clean.
-        TextConverter.convertSelectionOrWord(buffer: buffer, from: current, to: target)
+        TextConverter.replaceWord(buffer: buffer, layout1: l1, layout2: l2)
     }
 
     private func accessibilitySelectedText() -> String? {
@@ -142,21 +141,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func convertPhrase() {
-        guard let target = targetLayout() else { return }
-        TextConverter.replacePhrase(buffer: buffer, switchingTo: target)
+        guard let (l1, l2) = layoutPair() else { return }
+        TextConverter.replacePhrase(buffer: buffer, layout1: l1, layout2: l2)
     }
 
-    /// Returns the layout to switch TO based on the stored pair and current layout.
-    private func targetLayout() -> TISInputSource? {
-        let all       = LayoutManager.availableLayouts
+    private func oppositeLayout(_ l1: TISInputSource, _ l2: TISInputSource) -> TISInputSource {
         let currentID = LayoutManager.sourceID(of: LayoutManager.currentLayout)
+        return (currentID == LayoutManager.sourceID(of: l1)) ? l2 : l1
+    }
 
-        if let aID = settings.primaryLayoutID, let bID = settings.secondaryLayoutID {
-            let targetID = (currentID == aID) ? bID : aID
-            return all.first { LayoutManager.sourceID(of: $0) == targetID }
-        }
-
-        return all.first { LayoutManager.sourceID(of: $0) != currentID }
+    private func layoutPair() -> (TISInputSource, TISInputSource)? {
+        let all = LayoutManager.availableLayouts
+        guard let aID = settings.primaryLayoutID,
+              let bID = settings.secondaryLayoutID,
+              let a = all.first(where: { LayoutManager.sourceID(of: $0) == aID }),
+              let b = all.first(where: { LayoutManager.sourceID(of: $0) == bID })
+        else { return nil }
+        return (a, b)
     }
 
     // MARK: - Accessibility
