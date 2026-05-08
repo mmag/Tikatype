@@ -68,6 +68,24 @@ final class TextConverter {
         }
     }
 
+    /// Converts `text` and pastes it, replacing the current selection.
+    /// Used when the caller already has the selected text (e.g. from Accessibility API).
+    static func pasteConverted(_ text: String,
+                               from current: TISInputSource,
+                               to target: TISInputSource) {
+        guard let converted = DynamicKeyMapping.convert(text, from: current, to: target) else { return }
+        let pb    = NSPasteboard.general
+        let saved = pb.string(forType: .string)
+        pb.clearContents()
+        pb.setString(converted, forType: .string)
+        let src = CGEventSource(stateID: .hidSystemState)
+        postKey(9, modifiers: .maskCommand, source: src)  // Cmd+V
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            pb.clearContents()
+            if let saved { pb.setString(saved, forType: .string) }
+        }
+    }
+
     // MARK: - Private
 
     private static func postKey(_ keyCode: CGKeyCode,

@@ -112,7 +112,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func convertWord() {
         guard let target = targetLayout() else { return }
-        TextConverter.replaceWord(buffer: buffer, switchingTo: target)
+        if let selected = accessibilitySelectedText(), !selected.isEmpty {
+            TextConverter.pasteConverted(selected, from: LayoutManager.currentLayout, to: target)
+        } else {
+            TextConverter.replaceWord(buffer: buffer, switchingTo: target)
+        }
+    }
+
+    private func accessibilitySelectedText() -> String? {
+        let sys = AXUIElementCreateSystemWide()
+        var focused: AnyObject?
+        guard AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let el = focused
+        else { return nil }
+        var sel: AnyObject?
+        guard AXUIElementCopyAttributeValue(el as! AXUIElement, kAXSelectedTextAttribute as CFString, &sel) == .success
+        else { return nil }
+        return sel as? String
     }
 
     private func convertPhrase() {
