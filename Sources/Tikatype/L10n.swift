@@ -17,8 +17,8 @@ enum L10n {
     static var aboutVersion:         String { s("Version",                 "Версия") }
     static var aboutOK:              String { s("OK",                      "ОК") }
     static var aboutDescription:     String { s(
-        "Converts text between keyboard layouts.\n\nCtrl+Shift — convert last word\nDouble Opt — convert phrase",
-        "Конвертирует текст между раскладками клавиатуры.\n\nCtrl+Shift — последнее слово\nДвойной Opt — фраза от последнего знака препинания"
+        "Converts text between keyboard layouts.\n\nCtrl+Shift — convert last word\nDouble Opt — convert phrase\n⌥⌃ — convert selection",
+        "Конвертирует текст между раскладками клавиатуры.\n\nCtrl+Shift — последнее слово\nДвойной Opt — фраза от последнего знака препинания\n⌥⌃ — выделенный текст"
     )}
 
     // MARK: - Settings window
