@@ -4,29 +4,19 @@ import Foundation
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
-    // MARK: - Components
-
-    private let settings       = SettingsManager()
-    private let buffer         = WordBuffer()
-    private let detector       = LayoutDetector()
-    private let perAppManager  = PerAppLayoutManager()
-    private var corrector: AutoCorrector!
+    private let settings      = SettingsManager()
+    private let buffer        = PhraseBuffer()
+    private let perAppManager = PerAppLayoutManager()
     private var monitor: KeyboardMonitor!
-
-    // MARK: - Status bar
-
     private var statusItem: NSStatusItem?
 
-    // MARK: - Application lifecycle
+    // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)   // no Dock icon
-
+        NSApp.setActivationPolicy(.accessory)
         setupComponents()
-        setupTriggers()
         setupStatusBar()
         setupAppActivationTracking()
-
         checkAccessibilityPermission()
         monitor.start()
     }
@@ -38,22 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Setup
 
     private func setupComponents() {
-        corrector = AutoCorrector(detector: detector, buffer: buffer, settings: settings)
-        monitor   = KeyboardMonitor(buffer: buffer, corrector: corrector, settings: settings)
-    }
-
-    private func setupTriggers() {
-        let layouts = LayoutManager.availableLayouts
-        guard let russian = layouts.first(where: { LayoutManager.isCyrillic($0) }),
-              let latin   = layouts.first(where: { LayoutManager.isLatin($0) }) else {
-            print("Tikatype: couldn't find Russian+Latin layouts — trigger list will be empty")
-            return
-        }
-        detector.buildTriggers(
-            russianWords: russianFrequencyWords(),
-            russianLayout: russian,
-            latinLayout: latin
-        )
+        monitor = KeyboardMonitor(buffer: buffer, settings: settings)
+        monitor.onConvertWord   = { [weak self] in self?.convertWord() }
+        monitor.onConvertPhrase = { [weak self] in self?.convertPhrase() }
     }
 
     private func setupStatusBar() {
@@ -61,15 +38,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.title = "⌨"
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Tikatype", action: nil, keyEquivalent: ""))
+        menu.addItem(withTitle: "Tikatype", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
-
-        let toggleItem = NSMenuItem(title: "Auto-correct", action: #selector(toggleAutoCorrect), keyEquivalent: "")
-        toggleItem.state = settings.autoCorrect ? .on : .off
-        menu.addItem(toggleItem)
-
+        menu.addItem(withTitle: "Convert Selection",
+                     action: #selector(convertSelectionAction),
+                     keyEquivalent: "")
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(withTitle: "Quit",
+                     action: #selector(NSApplication.terminate(_:)),
+                     keyEquivalent: "q")
         statusItem?.menu = menu
     }
 
@@ -84,26 +61,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Actions
 
-    @objc private func toggleAutoCorrect() {
-        settings.autoCorrect = !settings.autoCorrect
-        corrector.isEnabled  = settings.autoCorrect
-        // Update menu checkmark
-        if let menu = statusItem?.menu {
-            for item in menu.items where item.action == #selector(toggleAutoCorrect) {
-                item.state = settings.autoCorrect ? .on : .off
-            }
-        }
+    @objc private func convertSelectionAction() {
+        guard let other = otherLayout() else { return }
+        TextConverter.convertSelected(from: LayoutManager.currentLayout, to: other)
     }
 
     @objc private func appDidActivate(_ note: Notification) {
-        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
-            return
-        }
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        else { return }
         perAppManager.applicationDidActivate(app)
-        buffer.clear()   // Don't carry over a half-typed word across app switches
+        buffer.clear()
     }
 
-    // MARK: - Accessibility check
+    // MARK: - Conversion
+
+    private func convertWord() {
+        guard let other = otherLayout() else { return }
+        TextConverter.replaceWord(buffer: buffer, switchingTo: other)
+    }
+
+    private func convertPhrase() {
+        guard let other = otherLayout() else { return }
+        TextConverter.replacePhrase(buffer: buffer, switchingTo: other)
+    }
+
+    private func otherLayout() -> TISInputSource? {
+        let currentID = LayoutManager.sourceID(of: LayoutManager.currentLayout)
+        return LayoutManager.availableLayouts.first { LayoutManager.sourceID(of: $0) != currentID }
+    }
+
+    // MARK: - Accessibility
 
     private func checkAccessibilityPermission() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
@@ -120,34 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Later")
         if alert.runModal() == .alertFirstButtonReturn {
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+            NSWorkspace.shared.open(
+                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+            )
         }
     }
-}
-
-// MARK: - Frequency word list
-
-/// A minimal Russian frequency word list for trigger generation.
-/// Replace with a fuller list (or load from a bundled file) for better accuracy.
-private func russianFrequencyWords() -> [String] {
-    return [
-        "это", "как", "он", "она", "они", "мы", "вы", "я",
-        "что", "не", "на", "в", "и", "а", "но", "или",
-        "да", "нет", "так", "уже", "ещё", "всё", "все",
-        "был", "была", "были", "есть", "будет", "будут",
-        "здесь", "там", "когда", "где", "если", "чтобы",
-        "только", "очень", "хорошо", "плохо", "можно",
-        "нельзя", "нужно", "должен", "должна", "могут",
-        "привет", "пока", "спасибо", "пожалуйста",
-        "который", "которая", "которые", "которого",
-        "время", "день", "год", "человек", "люди",
-        "работа", "дом", "слово", "жизнь", "рука",
-        "знаю", "знает", "знаешь", "думаю", "думает",
-        "хочу", "хочет", "хотим", "хотите", "хотят",
-        "иду", "идёт", "идём", "идёте", "идут",
-        "вижу", "видит", "видим", "видите", "видят",
-        "говорю", "говорит", "говорим", "говорят",
-        "сказал", "сказала", "сказали", "сказали",
-        "было", "стало", "стали", "стал", "стала",
-    ]
 }
