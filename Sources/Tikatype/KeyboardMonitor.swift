@@ -87,8 +87,10 @@ final class KeyboardMonitor {
         if let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
            settings.excludedApps.contains(id) { return }
 
-        // Any real keyDown cancels the pending double-opt window
+        // Any real keyDown cancels all pending modifier hotkeys
         lastOptionReleaseDate = nil
+        ctrlShiftPending = false
+        optShiftPending  = false
 
         let keyCode   = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         let modifiers = event.flags
@@ -122,6 +124,15 @@ final class KeyboardMonitor {
     // MARK: - Modifier-key hotkeys
 
     private func handleFlagsChanged(flags: CGEventFlags) {
+
+        if let id = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+           settings.excludedApps.contains(id) {
+            ctrlShiftPending = false
+            optShiftPending  = false
+            optionIsDown     = false
+            lastOptionReleaseDate = nil
+            return
+        }
 
         // Double-Option
         let optNow = flags.contains(.maskAlternate)

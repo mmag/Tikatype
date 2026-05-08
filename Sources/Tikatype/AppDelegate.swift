@@ -111,38 +111,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Conversion
 
+    private enum AXResult {
+        case selected(String)           // has selection text → pasteConverted
+        case emptyMultiLine             // AX works, no selection, multi-line → backspaces safe
+        case emptySingleLine            // AX works, no selection, single-line → Cmd+A safer
+        case unsupported                // AX attribute not available → Cmd+A
+    }
+
     private func convertWord() {
         guard let (l1, l2) = layoutPair() else { return }
 
-        if let selected = accessibilitySelectedText(), !selected.isEmpty {
+        switch axResult() {
+        case .selected(let text):
             let target = oppositeLayout(l1, l2)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                TextConverter.pasteConverted(selected, layout1: l1, layout2: l2, switchTo: target)
+                TextConverter.pasteConverted(text, layout1: l1, layout2: l2, switchTo: target)
             }
-            return
+        case .emptyMultiLine:
+            TextConverter.replaceWord(buffer: buffer, layout1: l1, layout2: l2)
+        case .emptySingleLine, .unsupported:
+            TextConverter.replaceWordSelectAll(buffer: buffer, layout1: l1, layout2: l2)
         }
-
-        TextConverter.replaceWord(buffer: buffer, layout1: l1, layout2: l2)
-    }
-
-    private func accessibilitySelectedText() -> String? {
-        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        var cfFocused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &cfFocused) == .success,
-              let focused = cfFocused
-        else { return nil }
-        let element = unsafeBitCast(focused, to: AXUIElement.self)
-        var cfSel: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &cfSel) == .success,
-              let sel = cfSel as? String, !sel.isEmpty
-        else { return nil }
-        return sel
     }
 
     private func convertPhrase() {
         guard let (l1, l2) = layoutPair() else { return }
         TextConverter.replacePhrase(buffer: buffer, layout1: l1, layout2: l2)
+    }
+
+    private func axResult() -> AXResult {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return .unsupported }
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        var cfFocused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &cfFocused) == .success,
+              let focused = cfFocused else { return .unsupported }
+        let element = unsafeBitCast(focused, to: AXUIElement.self)
+
+        var cfRole: CFTypeRef?
+        let role: String?
+        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &cfRole) == .success {
+            role = cfRole as? String
+        } else {
+            role = nil
+        }
+
+        var cfSel: CFTypeRef?
+        let selResult = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &cfSel)
+        let sel = selResult == .success ? (cfSel as? String ?? "") : nil
+
+        guard selResult == .success else { return .unsupported }
+        guard let selStr = sel, selStr.isEmpty else { return .selected(sel ?? "") }
+
+        return role == "AXTextArea" ? .emptyMultiLine : .emptySingleLine
     }
 
     private func oppositeLayout(_ l1: TISInputSource, _ l2: TISInputSource) -> TISInputSource {

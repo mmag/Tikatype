@@ -11,6 +11,8 @@ final class TextConverter {
 
     /// Converts the last typed word in the buffer to the opposite layout,
     /// determined by the per-stroke layoutID. Pastes result and switches layout.
+    /// Erases the last word via sequential backspaces and pastes the conversion.
+    /// Use for multi-line AX-capable fields (Telegram, Notes, etc.) where backspaces are reliable.
     static func replaceWord(buffer: PhraseBuffer,
                             layout1: TISInputSource,
                             layout2: TISInputSource) {
@@ -29,9 +31,36 @@ final class TextConverter {
         buffer.clear()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            eraseChars(eraseCount) {
+                pasteString(converted)
+                LayoutManager.switchTo(targetLayout)
+            }
+        }
+    }
+
+    /// Selects all text in the field (Cmd+A) and pastes the converted word.
+    /// Use for single-line fields and apps where AX is unavailable (Spotlight, Chrome, etc.)
+    /// where backspace simulation is unreliable.
+    static func replaceWordSelectAll(buffer: PhraseBuffer,
+                                     layout1: TISInputSource,
+                                     layout2: TISInputSource) {
+        let wordStrokes = buffer.currentWordStrokes
+        let sepStrokes  = buffer.trailingSeparatorStrokes
+        guard !wordStrokes.isEmpty else { return }
+
+        let id1 = LayoutManager.sourceID(of: layout1)
+        let converted = strokesToConverted(wordStrokes, id1: id1, layout1: layout1, layout2: layout2)
+                      + strokesToConverted(sepStrokes,  id1: id1, layout1: layout1, layout2: layout2)
+
+        let wordLayoutID = wordStrokes.first?.layoutID
+        let targetLayout = (wordLayoutID != nil && wordLayoutID == id1) ? layout2 : layout1
+
+        buffer.clear()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             let src = CGEventSource(stateID: .hidSystemState)
-            for _ in 0..<eraseCount { postKey(backspaceKeyCode, source: src) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            postKey(0, modifiers: .maskCommand, source: src)  // Cmd+A
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                 pasteString(converted)
                 LayoutManager.switchTo(targetLayout)
             }
@@ -56,9 +85,7 @@ final class TextConverter {
         buffer.clear()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            let src = CGEventSource(stateID: .hidSystemState)
-            for _ in 0..<eraseCount { postKey(backspaceKeyCode, source: src) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            eraseChars(eraseCount) {
                 pasteString(converted)
                 LayoutManager.switchTo(targetLayout)
             }
@@ -69,14 +96,16 @@ final class TextConverter {
     /// Used by the menu item / ⌥⌃ hotkey — does not rely on the buffer.
     static func convertSelected(layout1: TISInputSource, layout2: TISInputSource,
                                  switchTo targetLayout: TISInputSource) {
-        let pasteboard = NSPasteboard.general
-        let saved      = pasteboard.string(forType: .string)
+        let pasteboard  = NSPasteboard.general
+        let saved       = pasteboard.string(forType: .string)
+        let beforeCount = pasteboard.changeCount
 
         let src = CGEventSource(stateID: .hidSystemState)
         postKey(8, modifiers: .maskCommand, source: src)  // Cmd+C
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
+            guard pasteboard.changeCount != beforeCount,
+                  let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
             let converted = DynamicKeyMapping.convertBidirectional(text, layout1: layout1, layout2: layout2)
             pasteboard.clearContents()
             pasteboard.setString(converted, forType: .string)
@@ -118,6 +147,20 @@ final class TextConverter {
             }
         }
         return result
+    }
+
+    // Posts backspaces one at a time with 15 ms gaps, then calls completion after 120 ms.
+    // Sequential delivery prevents event coalescing in reactive text fields (e.g. Spotlight).
+    private static func eraseChars(_ count: Int, then completion: @escaping () -> Void) {
+        guard count > 0 else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { completion() }
+            return
+        }
+        let src = CGEventSource(stateID: .hidSystemState)
+        postKey(backspaceKeyCode, source: src)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.015) {
+            eraseChars(count - 1, then: completion)
+        }
     }
 
     private static func pasteString(_ text: String) {
