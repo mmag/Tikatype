@@ -35,7 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupStatusBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem?.button?.title = "⌨"
+        if let image = NSImage(systemSymbolName: "character.cursor.ibeam",
+                               accessibilityDescription: "Tikatype") {
+            image.isTemplate = true
+            statusItem?.button?.image = image
+        }
 
         let menu = NSMenu()
         menu.addItem(withTitle: "Tikatype", action: nil, keyEquivalent: "")
