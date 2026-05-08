@@ -48,6 +48,11 @@ final class LayoutManager {
         return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
     }
 
+    static func localizedName(of layout: TISInputSource) -> String? {
+        guard let ptr = TISGetInputSourceProperty(layout, kTISPropertyLocalizedName) else { return nil }
+        return Unmanaged<CFString>.fromOpaque(ptr).takeUnretainedValue() as String
+    }
+
     /// Returns true if layout appears to produce Cyrillic characters.
     static func isCyrillic(_ layout: TISInputSource) -> Bool {
         guard let langs = TISGetInputSourceProperty(layout, kTISPropertyInputSourceLanguages) else {

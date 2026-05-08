@@ -9,11 +9,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let perAppManager = PerAppLayoutManager()
     private var monitor: KeyboardMonitor!
     private var statusItem: NSStatusItem?
+    private var settingsWC: SettingsWindowController?
+
+    private let appVersion = "1.0"
 
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        initLayoutDefaults()
         setupComponents()
         setupStatusBar()
         setupAppActivationTracking()
@@ -26,6 +30,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Setup
+
+    private func initLayoutDefaults() {
+        guard settings.primaryLayoutID == nil else { return }
+        let all = LayoutManager.availableLayouts
+        settings.primaryLayoutID   = all.first(where: LayoutManager.isCyrillic).flatMap { LayoutManager.sourceID(of: $0) }
+                                  ?? all.first.flatMap { LayoutManager.sourceID(of: $0) }
+        settings.secondaryLayoutID = all.first(where: LayoutManager.isLatin).flatMap { LayoutManager.sourceID(of: $0) }
+                                  ?? (all.count > 1 ? LayoutManager.sourceID(of: all[1]) : nil)
+    }
 
     private func setupComponents() {
         monitor = KeyboardMonitor(buffer: buffer, settings: settings)
@@ -42,13 +55,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
-        menu.addItem(withTitle: "Tikatype", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: L10n.menuAbout,    action: #selector(showAbout),    keyEquivalent: "")
+        menu.addItem(withTitle: L10n.menuSettings, action: #selector(showSettings), keyEquivalent: ",")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Convert Selection",
+        menu.addItem(withTitle: L10n.menuConvertSelection,
                      action: #selector(convertSelectionAction),
                      keyEquivalent: "")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit",
+        menu.addItem(withTitle: L10n.menuQuit,
                      action: #selector(NSApplication.terminate(_:)),
                      keyEquivalent: "q")
         statusItem?.menu = menu
@@ -63,11 +77,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    // MARK: - Actions
+    // MARK: - Menu actions
+
+    @objc private func showAbout() {
+        let alert = NSAlert()
+        alert.messageText    = "Tikatype"
+        alert.informativeText = "\(L10n.aboutVersion) \(appVersion)\n\n\(L10n.aboutDescription)"
+        alert.addButton(withTitle: L10n.aboutOK)
+        if let img = NSImage(systemSymbolName: "character.cursor.ibeam",
+                             accessibilityDescription: nil) {
+            alert.icon = img
+        }
+        alert.runModal()
+    }
+
+    @objc private func showSettings() {
+        if settingsWC == nil { settingsWC = SettingsWindowController(settings: settings) }
+        settingsWC?.show()
+    }
 
     @objc private func convertSelectionAction() {
-        guard let other = otherLayout() else { return }
-        TextConverter.convertSelected(from: LayoutManager.currentLayout, to: other)
+        guard let target = targetLayout() else { return }
+        TextConverter.convertSelected(from: LayoutManager.currentLayout, to: target)
     }
 
     @objc private func appDidActivate(_ note: Notification) {
@@ -80,18 +111,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Conversion
 
     private func convertWord() {
-        guard let other = otherLayout() else { return }
-        TextConverter.replaceWord(buffer: buffer, switchingTo: other)
+        guard let target = targetLayout() else { return }
+        TextConverter.replaceWord(buffer: buffer, switchingTo: target)
     }
 
     private func convertPhrase() {
-        guard let other = otherLayout() else { return }
-        TextConverter.replacePhrase(buffer: buffer, switchingTo: other)
+        guard let target = targetLayout() else { return }
+        TextConverter.replacePhrase(buffer: buffer, switchingTo: target)
     }
 
-    private func otherLayout() -> TISInputSource? {
+    /// Returns the layout to switch TO based on the stored pair and current layout.
+    private func targetLayout() -> TISInputSource? {
+        let all       = LayoutManager.availableLayouts
         let currentID = LayoutManager.sourceID(of: LayoutManager.currentLayout)
-        return LayoutManager.availableLayouts.first { LayoutManager.sourceID(of: $0) != currentID }
+
+        if let aID = settings.primaryLayoutID, let bID = settings.secondaryLayoutID {
+            let targetID = (currentID == aID) ? bID : aID
+            return all.first { LayoutManager.sourceID(of: $0) == targetID }
+        }
+
+        return all.first { LayoutManager.sourceID(of: $0) != currentID }
     }
 
     // MARK: - Accessibility
@@ -105,9 +144,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showAccessibilityAlert() {
         let alert = NSAlert()
-        alert.messageText = "Accessibility Permission Required"
+        alert.messageText     = "Accessibility Permission Required"
         alert.informativeText = "Tikatype needs Accessibility permission to monitor keyboard input. Please grant it in System Settings → Privacy & Security → Accessibility, then relaunch."
-        alert.alertStyle = .warning
+        alert.alertStyle      = .warning
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Later")
         if alert.runModal() == .alertFirstButtonReturn {
