@@ -58,7 +58,7 @@ final class KeyboardMonitor {
             userInfo: selfPtr
         )
         guard let tap = eventTap else {
-            print("Tikatype: failed to create event tap — check Accessibility permission")
+            print("Tikatype: failed to create event tap — check Accessibility and Input Monitoring permissions")
             return
         }
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)

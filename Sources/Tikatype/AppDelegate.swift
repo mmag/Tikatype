@@ -265,26 +265,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return (a, b)
     }
 
-    // MARK: - Accessibility
+    // MARK: - Permissions
 
     private func checkAccessibilityPermission() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
         if !AXIsProcessTrustedWithOptions(options as CFDictionary) {
-            showAccessibilityAlert()
+            showPermissionAlert(
+                title: "Accessibility Permission Required",
+                body: "Tikatype needs Accessibility permission to read text fields. Please grant it in System Settings → Privacy & Security → Accessibility, then relaunch.",
+                url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            )
+        }
+        if !CGPreflightListenEventAccess() {
+            CGRequestListenEventAccess()
+            showPermissionAlert(
+                title: "Input Monitoring Permission Required",
+                body: "Tikatype needs Input Monitoring permission to capture keyboard shortcuts. Please grant it in System Settings → Privacy & Security → Input Monitoring, then relaunch.",
+                url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+            )
         }
     }
 
-    private func showAccessibilityAlert() {
+    private func showPermissionAlert(title: String, body: String, url: String) {
         let alert = NSAlert()
-        alert.messageText     = "Accessibility Permission Required"
-        alert.informativeText = "Tikatype needs Accessibility permission to monitor keyboard input. Please grant it in System Settings → Privacy & Security → Accessibility, then relaunch."
+        alert.messageText     = title
+        alert.informativeText = body
         alert.alertStyle      = .warning
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Later")
         if alert.runModal() == .alertFirstButtonReturn {
-            NSWorkspace.shared.open(
-                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-            )
+            NSWorkspace.shared.open(URL(string: url)!)
         }
     }
 }
