@@ -13,6 +13,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let appVersion = "1.0"
 
+    private struct LastConversion {
+        let text: String
+        let charCount: Int
+        let layout1: TISInputSource
+        let layout2: TISInputSource
+    }
+    private var lastConversion: LastConversion?
+
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -45,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         monitor.onConvertWord      = { [weak self] in self?.convertWord() }
         monitor.onConvertPhrase    = { [weak self] in self?.convertPhrase() }
         monitor.onConvertSelection = { [weak self] in self?.convertSelectionAction() }
+        monitor.onNewStroke        = { [weak self] in self?.lastConversion = nil }
     }
 
     private func setupStatusBar() {
@@ -121,22 +130,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func convertWord() {
         guard let (l1, l2) = layoutPair() else { return }
 
-        switch axResult() {
-        case .selected(let text):
+        let ax = axResult()
+
+        if case .selected(let text) = ax {
+            lastConversion = nil
             let target = oppositeLayout(l1, l2)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 TextConverter.pasteConverted(text, layout1: l1, layout2: l2, switchTo: target)
             }
+            return
+        }
+
+        if buffer.strokes.isEmpty, let last = lastConversion {
+            reconvert(last, ax: ax)
+            return
+        }
+
+        lastConversion = nil
+        switch ax {
         case .emptyMultiLine:
-            TextConverter.replaceWord(buffer: buffer, layout1: l1, layout2: l2)
+            TextConverter.replaceWord(buffer: buffer, layout1: l1, layout2: l2) { [weak self] converted in
+                self?.lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
+            }
         case .emptySingleLine, .unsupported:
-            TextConverter.replaceWordSelectAll(buffer: buffer, layout1: l1, layout2: l2)
+            TextConverter.replaceWordSelectAll(buffer: buffer, layout1: l1, layout2: l2) { [weak self] converted in
+                self?.lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
+            }
+        case .selected:
+            break
         }
     }
 
     private func convertPhrase() {
         guard let (l1, l2) = layoutPair() else { return }
-        TextConverter.replacePhrase(buffer: buffer, layout1: l1, layout2: l2)
+
+        if buffer.strokes.isEmpty, let last = lastConversion {
+            reconvert(last, ax: axResult())
+            return
+        }
+
+        TextConverter.replacePhrase(buffer: buffer, layout1: l1, layout2: l2) { [weak self] converted in
+            self?.lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
+        }
+    }
+
+    private func reconvert(_ last: LastConversion, ax: AXResult) {
+        guard let (l1, l2) = layoutPair() else { return }
+        let converted = DynamicKeyMapping.convertBidirectional(last.text, layout1: last.layout1, layout2: last.layout2)
+        let target = oppositeLayout(l1, l2)
+        lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
+        switch ax {
+        case .emptyMultiLine:
+            TextConverter.eraseAndPaste(charCount: last.charCount, converted, switchTo: target)
+        default:
+            TextConverter.selectAllAndPaste(converted, switchTo: target)
+        }
     }
 
     private func axResult() -> AXResult {

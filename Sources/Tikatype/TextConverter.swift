@@ -15,7 +15,8 @@ final class TextConverter {
     /// Use for multi-line AX-capable fields (Telegram, Notes, etc.) where backspaces are reliable.
     static func replaceWord(buffer: PhraseBuffer,
                             layout1: TISInputSource,
-                            layout2: TISInputSource) {
+                            layout2: TISInputSource,
+                            onConverted: ((String) -> Void)? = nil) {
         let wordStrokes = buffer.currentWordStrokes
         let sepStrokes  = buffer.trailingSeparatorStrokes
         let eraseCount  = wordStrokes.count + sepStrokes.count
@@ -28,6 +29,7 @@ final class TextConverter {
         let wordLayoutID = wordStrokes.first?.layoutID
         let targetLayout = (wordLayoutID != nil && wordLayoutID == id1) ? layout2 : layout1
 
+        onConverted?(converted)
         buffer.clear()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -43,7 +45,8 @@ final class TextConverter {
     /// where backspace simulation is unreliable.
     static func replaceWordSelectAll(buffer: PhraseBuffer,
                                      layout1: TISInputSource,
-                                     layout2: TISInputSource) {
+                                     layout2: TISInputSource,
+                                     onConverted: ((String) -> Void)? = nil) {
         let wordStrokes = buffer.currentWordStrokes
         let sepStrokes  = buffer.trailingSeparatorStrokes
         guard !wordStrokes.isEmpty else { return }
@@ -55,6 +58,7 @@ final class TextConverter {
         let wordLayoutID = wordStrokes.first?.layoutID
         let targetLayout = (wordLayoutID != nil && wordLayoutID == id1) ? layout2 : layout1
 
+        onConverted?(converted)
         buffer.clear()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -71,7 +75,8 @@ final class TextConverter {
     /// Each keystroke is converted to the OPPOSITE of the layout it was typed in.
     static func replacePhrase(buffer: PhraseBuffer,
                                layout1: TISInputSource,
-                               layout2: TISInputSource) {
+                               layout2: TISInputSource,
+                               onConverted: ((String) -> Void)? = nil) {
         let strokes = buffer.strokes
         guard !strokes.isEmpty else { return }
 
@@ -82,6 +87,7 @@ final class TextConverter {
         let targetLayout = (lastLayoutID != nil && lastLayoutID == id1) ? layout2 : layout1
 
         let eraseCount = strokes.count
+        onConverted?(converted)
         buffer.clear()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -127,6 +133,28 @@ final class TextConverter {
         let converted = DynamicKeyMapping.convertBidirectional(text, layout1: layout1, layout2: layout2)
         pasteString(converted)
         LayoutManager.switchTo(targetLayout)
+    }
+
+    // MARK: - Re-conversion helpers
+
+    static func eraseAndPaste(charCount: Int, _ text: String, switchTo targetLayout: TISInputSource) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            eraseChars(charCount) {
+                pasteString(text)
+                LayoutManager.switchTo(targetLayout)
+            }
+        }
+    }
+
+    static func selectAllAndPaste(_ text: String, switchTo targetLayout: TISInputSource) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            let src = CGEventSource(stateID: .hidSystemState)
+            postKey(0, modifiers: .maskCommand, source: src)  // Cmd+A
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                pasteString(text)
+                LayoutManager.switchTo(targetLayout)
+            }
+        }
     }
 
     // MARK: - Private

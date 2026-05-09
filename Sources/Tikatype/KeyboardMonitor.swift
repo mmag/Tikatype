@@ -14,6 +14,7 @@ final class KeyboardMonitor {
     var onConvertWord: (() -> Void)?
     var onConvertPhrase: (() -> Void)?
     var onConvertSelection: (() -> Void)?
+    var onNewStroke: (() -> Void)?
 
     // Double-Option: press → release → press (no keyDown between) within threshold
     private var optionIsDown = false
@@ -95,14 +96,15 @@ final class KeyboardMonitor {
         let keyCode   = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
         let modifiers = event.flags
 
-        if keyCode == 51 { buffer.removeLastStroke(); return }  // Backspace
-        if keyCode == 53 { buffer.clear(); return }             // Escape
-        if keyCode == 36 { buffer.clear(); return }             // Return → sentence break
+        if keyCode == 51 { buffer.removeLastStroke(); onNewStroke?(); return }  // Backspace
+        if keyCode == 53 { buffer.clear(); onNewStroke?(); return }             // Escape
+        if keyCode == 36 { buffer.clear(); onNewStroke?(); return }             // Return → sentence break
 
-        guard !isNavigationKey(keyCode) else { return }
+        guard !isNavigationKey(keyCode) else { onNewStroke?(); return }
 
         if modifiers.contains(.maskCommand) || modifiers.contains(.maskControl) {
             buffer.clear()
+            onNewStroke?()
             return
         }
 
