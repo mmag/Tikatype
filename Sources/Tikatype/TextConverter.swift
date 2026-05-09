@@ -135,6 +135,29 @@ final class TextConverter {
         LayoutManager.switchTo(targetLayout)
     }
 
+    // MARK: - Helpers for callers
+
+    /// Computes the converted word from buffer strokes without modifying anything.
+    static func computeWord(buffer: PhraseBuffer,
+                             layout1: TISInputSource,
+                             layout2: TISInputSource) -> (converted: String, target: TISInputSource)? {
+        let wordStrokes = buffer.currentWordStrokes
+        let sepStrokes  = buffer.trailingSeparatorStrokes
+        guard !wordStrokes.isEmpty else { return nil }
+        let id1 = LayoutManager.sourceID(of: layout1)
+        let converted = strokesToConverted(wordStrokes, id1: id1, layout1: layout1, layout2: layout2)
+                      + strokesToConverted(sepStrokes,  id1: id1, layout1: layout1, layout2: layout2)
+        let wordLayoutID = wordStrokes.first?.layoutID
+        let target = (wordLayoutID != nil && wordLayoutID == id1) ? layout2 : layout1
+        return (converted, target)
+    }
+
+    /// Pastes text via clipboard + Cmd+V and switches layout. Restores clipboard afterwards.
+    static func paste(_ text: String, switchTo targetLayout: TISInputSource) {
+        pasteString(text)
+        LayoutManager.switchTo(targetLayout)
+    }
+
     // MARK: - Re-conversion helpers
 
     static func eraseAndPaste(charCount: Int, _ text: String, switchTo targetLayout: TISInputSource) {

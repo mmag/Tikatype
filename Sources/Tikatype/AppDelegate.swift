@@ -123,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum AXResult {
         case selected(String)           // has selection text → pasteConverted
         case emptyMultiLine             // AX works, no selection, multi-line → backspaces safe
-        case emptySingleLine            // AX works, no selection, single-line → Cmd+A safer
+        case emptySingleLine(AXUIElement) // AX works, no selection, single-line → AX select + paste
         case unsupported                // AX attribute not available → Cmd+A
     }
 
@@ -152,7 +152,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             TextConverter.replaceWord(buffer: buffer, layout1: l1, layout2: l2) { [weak self] converted in
                 self?.lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
             }
-        case .emptySingleLine, .unsupported:
+        case .emptySingleLine(let element):
+            guard let (converted, target) = TextConverter.computeWord(buffer: buffer, layout1: l1, layout2: l2) else { return }
+            lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
+            buffer.clear()
+            axSelectAndPaste(converted, element: element, switchTo: target)
+        case .unsupported:
             TextConverter.replaceWordSelectAll(buffer: buffer, layout1: l1, layout2: l2) { [weak self] converted in
                 self?.lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
             }
@@ -182,16 +187,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch ax {
         case .emptyMultiLine:
             TextConverter.eraseAndPaste(charCount: last.charCount, converted, switchTo: target)
+        case .emptySingleLine(let element):
+            axSelectAndPaste(converted, element: element, switchTo: target)
         default:
             TextConverter.selectAllAndPaste(converted, switchTo: target)
         }
     }
 
+    // Writes converted text directly via AX kAXValueAttribute (no clipboard, no keyboard events).
+    // Falls back to AX-select-range + paste if the field doesn't allow direct write.
+    private func axSelectAndPaste(_ text: String, element: AXUIElement, switchTo target: TISInputSource) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            let writeResult = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, text as CFTypeRef)
+
+            if writeResult == .success {
+                let len = (text as NSString).length
+                var range = CFRangeMake(len, 0)
+                if let cfRange = AXValueCreate(.cfRange, &range) {
+                    AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, cfRange)
+                }
+                LayoutManager.switchTo(target)
+                return
+            }
+            // Fallback: select all via AX range, then paste via clipboard
+            var cfVal: CFTypeRef?
+            let selLen: CFIndex
+            if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &cfVal) == .success,
+               let val = cfVal as? String { selLen = val.utf16.count } else { selLen = 999 }
+            var selRange = CFRangeMake(0, selLen)
+            if let cfRange = AXValueCreate(.cfRange, &selRange) {
+                AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, cfRange)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                TextConverter.paste(text, switchTo: target)
+            }
+        }
+    }
+
     private func axResult() -> AXResult {
-        guard let app = NSWorkspace.shared.frontmostApplication else { return .unsupported }
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        // Use system-wide focused element so Spotlight (not in frontmostApplication) is handled correctly.
+        let systemWide = AXUIElementCreateSystemWide()
         var cfFocused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &cfFocused) == .success,
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &cfFocused) == .success,
               let focused = cfFocused else { return .unsupported }
         let element = unsafeBitCast(focused, to: AXUIElement.self)
 
@@ -210,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard selResult == .success else { return .unsupported }
         guard let selStr = sel, selStr.isEmpty else { return .selected(sel ?? "") }
 
-        return role == "AXTextArea" ? .emptyMultiLine : .emptySingleLine
+        return role == "AXTextArea" ? .emptyMultiLine : .emptySingleLine(element)
     }
 
     private func oppositeLayout(_ l1: TISInputSource, _ l2: TISInputSource) -> TISInputSource {
