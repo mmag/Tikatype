@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let layout2: TISInputSource
     }
     private var lastConversion: LastConversion?
+    private var conversionPending = false
 
     // MARK: - Lifecycle
 
@@ -107,7 +108,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func convertSelectionAction() {
-        guard let (l1, l2) = layoutPair() else { return }
+        guard beginConversion() else { return }
+        guard let (l1, l2) = layoutPair() else { conversionPending = false; return }
         TextConverter.convertSelected(layout1: l1, layout2: l2, switchTo: oppositeLayout(l1, l2))
     }
 
@@ -121,186 +123,134 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Conversion
 
     private enum AXResult {
-        case selected(String)             // has selection text → pasteConverted
-        case emptyMultiLine(AXUIElement)  // AX works, no selection, multi-line → AX select range + paste
-        case emptySingleLine(AXUIElement) // AX works, no selection, single-line → AX select + paste
-        case unsupported                  // AX attribute not available → Cmd+A
+        case selected(String)
+        case unsupported
+    }
+
+    private func beginConversion() -> Bool {
+        guard !conversionPending else { return false }
+        conversionPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.conversionPending = false
+        }
+        return true
     }
 
     private func convertWord() {
-        guard let (l1, l2) = layoutPair() else { return }
+        guard beginConversion() else { return }
+        guard let (l1, l2) = layoutPair() else { conversionPending = false; return }
 
-        let ax = axResult()
+        // Buffer has strokes: erase via backspaces. For single-line fields (Spotlight, URL bars)
+        // use direct AX value write instead — backspaces are unreliable there.
+        if !buffer.strokes.isEmpty {
+            guard let (converted, target) = TextConverter.computeWord(buffer: buffer, layout1: l1, layout2: l2) else { return }
+            let charCount = buffer.currentWordStrokes.count + buffer.trailingSeparatorCount
+            lastConversion = LastConversion(text: converted, charCount: charCount, layout1: l1, layout2: l2)
+            buffer.clear()
+            if let element = focusedSingleLineElement() {
+                pasteDirectly(converted, element: element, switchTo: target)
+            } else {
+                TextConverter.eraseAndPaste(charCount: charCount, converted, switchTo: target)
+            }
+            return
+        }
 
-        if case .selected(let text) = ax {
-            lastConversion = nil
+        // Buffer empty: re-conversion takes priority over AX selection to prevent apps that
+        // falsely report all document text as "selected" (e.g. Sublime Text) from triggering
+        // a full-document replace.
+        if let last = lastConversion {
+            reconvert(last)
+            return
+        }
+
+        if case .selected(let text) = axResult() {
             let target = oppositeLayout(l1, l2)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 TextConverter.pasteConverted(text, layout1: l1, layout2: l2, switchTo: target)
             }
-            return
-        }
-
-        if buffer.strokes.isEmpty, let last = lastConversion {
-            reconvert(last, ax: ax)
-            return
-        }
-
-        lastConversion = nil
-        switch ax {
-        case .emptyMultiLine(let element):
-            guard let (converted, target) = TextConverter.computeWord(buffer: buffer, layout1: l1, layout2: l2) else { return }
-            let charCount = buffer.currentWordStrokes.count + buffer.trailingSeparatorCount
-            lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
-            buffer.clear()
-            axSelectRangeAndPaste(converted, element: element, charCount: charCount, switchTo: target)
-        case .emptySingleLine(let element):
-            guard let (converted, target) = TextConverter.computeWord(buffer: buffer, layout1: l1, layout2: l2) else { return }
-            lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
-            buffer.clear()
-            axSelectAndPaste(converted, element: element, switchTo: target)
-        case .unsupported:
-            TextConverter.replaceWordSelectAll(buffer: buffer, layout1: l1, layout2: l2) { [weak self] converted in
-                self?.lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
-            }
-        case .selected:
-            break
         }
     }
 
     private func convertPhrase() {
-        guard let (l1, l2) = layoutPair() else { return }
+        guard beginConversion() else { return }
+        guard let (l1, l2) = layoutPair() else { conversionPending = false; return }
 
-        if buffer.strokes.isEmpty, let last = lastConversion {
-            reconvert(last, ax: axResult())
+        // Buffer has strokes: erase via backspaces. For single-line fields use direct AX write.
+        if !buffer.strokes.isEmpty {
+            guard let (converted, charCount, target) = TextConverter.computePhrase(buffer: buffer, layout1: l1, layout2: l2) else { return }
+            lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
+            buffer.clear()
+            if let element = focusedSingleLineElement() {
+                pasteDirectly(converted, element: element, switchTo: target)
+            } else {
+                TextConverter.eraseAndPaste(charCount: charCount, converted, switchTo: target)
+            }
             return
         }
 
-        let ax = axResult()
+        if let last = lastConversion {
+            reconvert(last)
+            return
+        }
 
-        if case .selected(let text) = ax {
-            lastConversion = nil
+        if case .selected(let text) = axResult() {
             let target = oppositeLayout(l1, l2)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 TextConverter.pasteConverted(text, layout1: l1, layout2: l2, switchTo: target)
             }
-            return
-        }
-
-        guard let (converted, charCount, target) = TextConverter.computePhrase(buffer: buffer, layout1: l1, layout2: l2) else { return }
-        lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
-        buffer.clear()
-
-        switch ax {
-        case .emptyMultiLine(let element):
-            axSelectRangeAndPaste(converted, element: element, charCount: charCount, switchTo: target)
-        case .emptySingleLine(let element):
-            axSelectAndPaste(converted, element: element, switchTo: target)
-        case .unsupported:
-            TextConverter.selectAllAndPaste(converted, switchTo: target)
-        case .selected:
-            break
         }
     }
 
-    private func reconvert(_ last: LastConversion, ax: AXResult) {
+    private func reconvert(_ last: LastConversion) {
         guard let (l1, l2) = layoutPair() else { return }
         let converted = DynamicKeyMapping.convertBidirectional(last.text, layout1: last.layout1, layout2: last.layout2)
         let target = oppositeLayout(l1, l2)
         lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
-        switch ax {
-        case .emptyMultiLine(let element):
-            axSelectRangeAndPaste(converted, element: element, charCount: last.charCount, switchTo: target)
-        case .emptySingleLine(let element):
-            axSelectAndPaste(converted, element: element, switchTo: target)
-        default:
-            TextConverter.selectAllAndPaste(converted, switchTo: target)
+        if let element = focusedSingleLineElement() {
+            pasteDirectly(converted, element: element, switchTo: target)
+        } else {
+            TextConverter.eraseAndPaste(charCount: last.charCount, converted, switchTo: target)
         }
     }
 
-    // Selects charCount characters before the cursor via AX, then pastes.
-    // No backspaces sent — selection + paste is atomic from the text field's point of view.
-    // Falls back to Cmd+A + paste if the cursor position is unavailable.
-    private func axSelectRangeAndPaste(_ text: String, element: AXUIElement, charCount: Int, switchTo target: TISInputSource) {
-        var cfVal: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &cfVal) == .success,
-              let rawVal = cfVal else {
-            TextConverter.selectAllAndPaste(text, switchTo: target)
-            return
-        }
-        let axValue = unsafeBitCast(rawVal, to: AXValue.self)
-        var cursorRange = CFRange()
-        guard AXValueGetValue(axValue, .cfRange, &cursorRange) else {
-            TextConverter.selectAllAndPaste(text, switchTo: target)
-            return
-        }
-        let cursorEnd = cursorRange.location + cursorRange.length
-        let start = max(0, cursorEnd - charCount)
-        var selRange = CFRangeMake(start, cursorEnd - start)
-        guard let cfRange = AXValueCreate(.cfRange, &selRange) else {
-            TextConverter.selectAllAndPaste(text, switchTo: target)
-            return
-        }
-        AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, cfRange)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            TextConverter.paste(text, switchTo: target)
-        }
+    private static let singleLineRoles: Set<String> = ["AXTextField", "AXSearchField", "AXComboBox"]
+
+    private func focusedSingleLineElement() -> AXUIElement? {
+        let systemWide = AXUIElementCreateSystemWide()
+        var cfFocused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &cfFocused) == .success,
+              let focused = cfFocused else { return nil }
+        let element = unsafeBitCast(focused, to: AXUIElement.self)
+        var cfRole: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &cfRole) == .success,
+              let role = cfRole as? String,
+              Self.singleLineRoles.contains(role) else { return nil }
+        return element
     }
 
-    // Writes converted text directly via AX kAXValueAttribute (no clipboard, no keyboard events).
-    // Falls back to AX-select-range + paste if the field doesn't allow direct write.
-    private func axSelectAndPaste(_ text: String, element: AXUIElement, switchTo target: TISInputSource) {
+    private func pasteDirectly(_ text: String, element: AXUIElement, switchTo target: TISInputSource) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            let writeResult = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, text as CFTypeRef)
-
-            if writeResult == .success {
-                let len = (text as NSString).length
-                var range = CFRangeMake(len, 0)
-                if let cfRange = AXValueCreate(.cfRange, &range) {
-                    AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, cfRange)
-                }
-                LayoutManager.switchTo(target)
-                return
-            }
-            // Fallback: select all via AX range, then paste via clipboard
-            var cfVal: CFTypeRef?
-            let selLen: CFIndex
-            if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &cfVal) == .success,
-               let val = cfVal as? String { selLen = val.utf16.count } else { selLen = 999 }
-            var selRange = CFRangeMake(0, selLen)
-            if let cfRange = AXValueCreate(.cfRange, &selRange) {
+            AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, text as CFTypeRef)
+            let len = (text as NSString).length
+            var range = CFRangeMake(len, 0)
+            if let cfRange = AXValueCreate(.cfRange, &range) {
                 AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, cfRange)
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                TextConverter.paste(text, switchTo: target)
-            }
+            LayoutManager.switchTo(target)
         }
     }
 
     private func axResult() -> AXResult {
-        // Use system-wide focused element so Spotlight (not in frontmostApplication) is handled correctly.
         let systemWide = AXUIElementCreateSystemWide()
         var cfFocused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &cfFocused) == .success,
               let focused = cfFocused else { return .unsupported }
         let element = unsafeBitCast(focused, to: AXUIElement.self)
 
-        var cfRole: CFTypeRef?
-        let role: String?
-        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &cfRole) == .success {
-            role = cfRole as? String
-        } else {
-            role = nil
-        }
-
         var cfSel: CFTypeRef?
-        let selResult = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &cfSel)
-        let sel = selResult == .success ? (cfSel as? String ?? "") : nil
-
-        guard selResult == .success else { return .unsupported }
-        guard let selStr = sel, selStr.isEmpty else { return .selected(sel ?? "") }
-
-        return role == "AXTextArea" ? .emptyMultiLine(element) : .emptySingleLine(element)
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &cfSel) == .success,
+              let sel = cfSel as? String, !sel.isEmpty else { return .unsupported }
+        return .selected(sel)
     }
 
     private func oppositeLayout(_ l1: TISInputSource, _ l2: TISInputSource) -> TISInputSource {
