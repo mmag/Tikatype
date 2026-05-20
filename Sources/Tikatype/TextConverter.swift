@@ -152,6 +152,19 @@ final class TextConverter {
         return (converted, target)
     }
 
+    /// Computes the converted phrase from all buffer strokes without modifying anything.
+    static func computePhrase(buffer: PhraseBuffer,
+                               layout1: TISInputSource,
+                               layout2: TISInputSource) -> (converted: String, charCount: Int, target: TISInputSource)? {
+        let strokes = buffer.strokes
+        guard !strokes.isEmpty else { return nil }
+        let id1 = LayoutManager.sourceID(of: layout1)
+        let converted = strokesToConverted(strokes, id1: id1, layout1: layout1, layout2: layout2)
+        let lastLayoutID = strokes.last(where: { !$0.isSeparator })?.layoutID ?? strokes.last?.layoutID
+        let target = (lastLayoutID != nil && lastLayoutID == id1) ? layout2 : layout1
+        return (converted, strokes.count, target)
+    }
+
     /// Pastes text via clipboard + Cmd+V and switches layout. Restores clipboard afterwards.
     static func paste(_ text: String, switchTo targetLayout: TISInputSource) {
         pasteString(text)

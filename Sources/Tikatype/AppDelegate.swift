@@ -121,10 +121,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Conversion
 
     private enum AXResult {
-        case selected(String)           // has selection text → pasteConverted
-        case emptyMultiLine             // AX works, no selection, multi-line → backspaces safe
+        case selected(String)             // has selection text → pasteConverted
+        case emptyMultiLine(AXUIElement)  // AX works, no selection, multi-line → AX select range + paste
         case emptySingleLine(AXUIElement) // AX works, no selection, single-line → AX select + paste
-        case unsupported                // AX attribute not available → Cmd+A
+        case unsupported                  // AX attribute not available → Cmd+A
     }
 
     private func convertWord() {
@@ -148,10 +148,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         lastConversion = nil
         switch ax {
-        case .emptyMultiLine:
-            TextConverter.replaceWord(buffer: buffer, layout1: l1, layout2: l2) { [weak self] converted in
-                self?.lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
-            }
+        case .emptyMultiLine(let element):
+            guard let (converted, target) = TextConverter.computeWord(buffer: buffer, layout1: l1, layout2: l2) else { return }
+            let charCount = buffer.currentWordStrokes.count + buffer.trailingSeparatorCount
+            lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
+            buffer.clear()
+            axSelectRangeAndPaste(converted, element: element, charCount: charCount, switchTo: target)
         case .emptySingleLine(let element):
             guard let (converted, target) = TextConverter.computeWord(buffer: buffer, layout1: l1, layout2: l2) else { return }
             lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
@@ -174,8 +176,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        TextConverter.replacePhrase(buffer: buffer, layout1: l1, layout2: l2) { [weak self] converted in
-            self?.lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
+        let ax = axResult()
+
+        if case .selected(let text) = ax {
+            lastConversion = nil
+            let target = oppositeLayout(l1, l2)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                TextConverter.pasteConverted(text, layout1: l1, layout2: l2, switchTo: target)
+            }
+            return
+        }
+
+        guard let (converted, charCount, target) = TextConverter.computePhrase(buffer: buffer, layout1: l1, layout2: l2) else { return }
+        lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
+        buffer.clear()
+
+        switch ax {
+        case .emptyMultiLine(let element):
+            axSelectRangeAndPaste(converted, element: element, charCount: charCount, switchTo: target)
+        case .emptySingleLine(let element):
+            axSelectAndPaste(converted, element: element, switchTo: target)
+        case .unsupported:
+            TextConverter.selectAllAndPaste(converted, switchTo: target)
+        case .selected:
+            break
         }
     }
 
@@ -185,12 +209,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let target = oppositeLayout(l1, l2)
         lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
         switch ax {
-        case .emptyMultiLine:
-            TextConverter.eraseAndPaste(charCount: last.charCount, converted, switchTo: target)
+        case .emptyMultiLine(let element):
+            axSelectRangeAndPaste(converted, element: element, charCount: last.charCount, switchTo: target)
         case .emptySingleLine(let element):
             axSelectAndPaste(converted, element: element, switchTo: target)
         default:
             TextConverter.selectAllAndPaste(converted, switchTo: target)
+        }
+    }
+
+    // Selects charCount characters before the cursor via AX, then pastes.
+    // No backspaces sent — selection + paste is atomic from the text field's point of view.
+    // Falls back to Cmd+A + paste if the cursor position is unavailable.
+    private func axSelectRangeAndPaste(_ text: String, element: AXUIElement, charCount: Int, switchTo target: TISInputSource) {
+        var cfVal: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &cfVal) == .success,
+              let rawVal = cfVal else {
+            TextConverter.selectAllAndPaste(text, switchTo: target)
+            return
+        }
+        let axValue = unsafeBitCast(rawVal, to: AXValue.self)
+        var cursorRange = CFRange()
+        guard AXValueGetValue(axValue, .cfRange, &cursorRange) else {
+            TextConverter.selectAllAndPaste(text, switchTo: target)
+            return
+        }
+        let cursorEnd = cursorRange.location + cursorRange.length
+        let start = max(0, cursorEnd - charCount)
+        var selRange = CFRangeMake(start, cursorEnd - start)
+        guard let cfRange = AXValueCreate(.cfRange, &selRange) else {
+            TextConverter.selectAllAndPaste(text, switchTo: target)
+            return
+        }
+        AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, cfRange)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            TextConverter.paste(text, switchTo: target)
         }
     }
 
@@ -247,7 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard selResult == .success else { return .unsupported }
         guard let selStr = sel, selStr.isEmpty else { return .selected(sel ?? "") }
 
-        return role == "AXTextArea" ? .emptyMultiLine : .emptySingleLine(element)
+        return role == "AXTextArea" ? .emptyMultiLine(element) : .emptySingleLine(element)
     }
 
     private func oppositeLayout(_ l1: TISInputSource, _ l2: TISInputSource) -> TISInputSource {
