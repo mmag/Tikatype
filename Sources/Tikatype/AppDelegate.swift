@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var settingsWC: SettingsWindowController?
 
-    private let appVersion = "1.0.2"
+    private let appVersion = "1.0.3"
 
     private struct LastConversion {
         let text: String

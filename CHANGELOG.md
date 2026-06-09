@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.3 — 2026-06-09
+
+### Fixed
+
+- **Keys that are letters in another layout** (e.g. `.` = `ю` in Russian): pressing such a key while in a different layout no longer clears the phrase buffer. The keystroke is now buffered normally and converted correctly, so words like `вьюга` typed as `bm.uf` in English now convert in full.
+- **Browser text fields**: converting the last word no longer deletes the entire field content. The AX-based replacement now reads the current field value and replaces only the trailing characters that belong to the converted word, preserving all preceding text.
+
 ## 1.0.1 — 2026-05-10
 
 ### Fixed
