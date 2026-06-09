@@ -148,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastConversion = LastConversion(text: converted, charCount: charCount, layout1: l1, layout2: l2)
             buffer.clear()
             if let element = focusedSingleLineElement() {
-                pasteDirectly(converted, element: element, switchTo: target)
+                pasteDirectly(converted, charCount: charCount, element: element, switchTo: target)
             } else {
                 TextConverter.eraseAndPaste(charCount: charCount, converted, switchTo: target)
             }
@@ -181,7 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
             buffer.clear()
             if let element = focusedSingleLineElement() {
-                pasteDirectly(converted, element: element, switchTo: target)
+                pasteDirectly(converted, charCount: charCount, element: element, switchTo: target)
             } else {
                 TextConverter.eraseAndPaste(charCount: charCount, converted, switchTo: target)
             }
@@ -207,7 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let target = oppositeLayout(l1, l2)
         lastConversion = LastConversion(text: converted, charCount: converted.count, layout1: l1, layout2: l2)
         if let element = focusedSingleLineElement() {
-            pasteDirectly(converted, element: element, switchTo: target)
+            pasteDirectly(converted, charCount: last.charCount, element: element, switchTo: target)
         } else {
             TextConverter.eraseAndPaste(charCount: last.charCount, converted, switchTo: target)
         }
@@ -228,10 +228,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return element
     }
 
-    private func pasteDirectly(_ text: String, element: AXUIElement, switchTo target: TISInputSource) {
+    private func pasteDirectly(_ text: String, charCount: Int, element: AXUIElement, switchTo target: TISInputSource) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, text as CFTypeRef)
-            let len = (text as NSString).length
+            var cfValue: CFTypeRef?
+            let newValue: String
+            if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &cfValue) == .success,
+               let current = cfValue as? String, current.count >= charCount {
+                newValue = String(current.dropLast(charCount)) + text
+            } else {
+                newValue = text
+            }
+            AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, newValue as CFTypeRef)
+            let len = (newValue as NSString).length
             var range = CFRangeMake(len, 0)
             if let cfRange = AXValueCreate(.cfRange, &range) {
                 AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, cfRange)

@@ -115,10 +115,18 @@ final class KeyboardMonitor {
             return
         }
 
-        // Sentence-ending punctuation clears the phrase
+        // Sentence-ending punctuation clears the phrase, unless the key maps to a letter
+        // in the other tracked layout (e.g. "." = "ю" in Russian).
         let ch = DynamicKeyMapping.character(forKeyCode: keyCode, modifiers: modifiers,
                                              layout: LayoutManager.currentLayout)
-        if let ch, "!.?".contains(ch) { buffer.clear(); return }
+        if let ch, "!.?".contains(ch) {
+            if isLetterInOtherLayout(keyCode: keyCode, modifiers: modifiers) {
+                buffer.append(KeyStroke(keyCode: keyCode, modifiers: modifiers, isSeparator: false, layoutID: currentLayoutID))
+            } else {
+                buffer.clear()
+            }
+            return
+        }
 
         buffer.append(KeyStroke(keyCode: keyCode, modifiers: modifiers, isSeparator: false, layoutID: currentLayoutID))
     }
@@ -184,5 +192,21 @@ final class KeyboardMonitor {
     private func isNavigationKey(_ keyCode: CGKeyCode) -> Bool {
         let navKeys: Set<CGKeyCode> = [123, 124, 125, 126, 115, 116, 119, 121, 114, 117]
         return navKeys.contains(keyCode) || (keyCode >= 96 && keyCode <= 122)
+    }
+
+    private func isLetterInOtherLayout(keyCode: CGKeyCode, modifiers: CGEventFlags) -> Bool {
+        let currentID = LayoutManager.sourceID(of: LayoutManager.currentLayout)
+        let otherIDs  = [settings.primaryLayoutID, settings.secondaryLayoutID]
+            .compactMap { $0 }
+            .filter { $0 != currentID }
+        guard !otherIDs.isEmpty else { return false }
+        let all = LayoutManager.availableLayouts
+        for layout in all where otherIDs.contains(LayoutManager.sourceID(of: layout) ?? "") {
+            if let ch = DynamicKeyMapping.character(forKeyCode: keyCode, modifiers: modifiers, layout: layout),
+               ch.unicodeScalars.allSatisfy({ CharacterSet.letters.contains($0) }) {
+                return true
+            }
+        }
+        return false
     }
 }
