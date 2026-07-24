@@ -75,6 +75,15 @@ final class DynamicKeyMapping {
 
     /// Converts each character from whichever layout it belongs to, to the other layout.
     /// Characters not found in either layout are passed through unchanged.
+    ///
+    /// Punctuation is often reachable from *both* layouts at different key positions
+    /// (e.g. RussianWin produces "," via Shift+period, colliding with the plain ","
+    /// key on ABC). Deciding per character which layout produced it is ambiguous for
+    /// those keys, so the source layout is instead picked once — from the first
+    /// character that unambiguously belongs to only one layout (letters, which never
+    /// overlap between Latin and Cyrillic) — and applied uniformly to the whole string.
+    /// This mirrors how the keystroke-buffer conversion behaves, where every stroke in
+    /// a mistyped word shares whichever layout was actually active when it was typed.
     static func convertBidirectional(_ text: String,
                                      layout1: TISInputSource,
                                      layout2: TISInputSource) -> String {
@@ -92,10 +101,29 @@ final class DynamicKeyMapping {
                 }
             }
         }
+
+        // Pick the source layout once, from the first character that belongs to only one map.
+        var sourceIsLayout1: Bool?
+        for ch in text {
+            let inMap1 = map1[ch] != nil
+            let inMap2 = map2[ch] != nil
+            if inMap1 != inMap2 {
+                sourceIsLayout1 = inMap1
+                break
+            }
+        }
+
         var result = ""
         for ch in text {
-            if let (keyCode, mods) = map1[ch],
+            let preferLayout1 = sourceIsLayout1 ?? (map1[ch] != nil)
+            if preferLayout1, let (keyCode, mods) = map1[ch],
                let converted = character(forKeyCode: keyCode, modifiers: mods, layout: layout2) {
+                result += converted
+            } else if !preferLayout1, let (keyCode, mods) = map2[ch],
+                      let converted = character(forKeyCode: keyCode, modifiers: mods, layout: layout1) {
+                result += converted
+            } else if let (keyCode, mods) = map1[ch],
+                      let converted = character(forKeyCode: keyCode, modifiers: mods, layout: layout2) {
                 result += converted
             } else if let (keyCode, mods) = map2[ch],
                       let converted = character(forKeyCode: keyCode, modifiers: mods, layout: layout1) {

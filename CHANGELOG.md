@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.4 — 2026-07-24
+
+### Fixed
+
+- **⌥⌃ (convert selection) with ambiguous punctuation**: characters reachable from *both* layouts at different key positions (e.g. RussianWin's Shift+period also produces `,`, colliding with the plain `,` key on ABC) could be converted using the wrong layout, corrupting punctuation mid-word (`,` → `?`, `;` → `$`, etc.) depending on which layout was set as primary. The source layout is now determined once per selection — from the first unambiguous letter — and applied consistently to every character, matching the already-correct behavior of ⌥⌥.
+
 ## 1.0.3 — 2026-06-09
 
 ### Fixed
