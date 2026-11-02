@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var settingsWC: SettingsWindowController?
 
-    private let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.4"
+    private let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.5"
 
     private struct LastConversion {
         let text: String
@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         initLayoutDefaults()
         setupComponents()
+        settings.syncLaunchAtLogin()
         setupStatusBar()
         setupAppActivationTracking()
         checkAccessibilityPermission()

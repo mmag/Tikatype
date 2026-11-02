@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.5 — 2026-11-02
+
+### Fixed
+
+- **Launch at login never worked**: the checkbox only stored a flag and never registered the app with the system. It now uses `SMAppService` to add/remove the login item, and the stored intent is re-applied at startup so existing users who had the box checked get the login item without touching the setting.
+- **Per-app layout restore no longer re-selects the already-active layout**: every `TISSelectInputSource` call, even for the current layout, makes macOS show the cursor input-source indicator via `CursorUIViewService`. On a system where that service is stuck (it can hang in a ViewBridge frame wait and then leak ~300 KB per indicator request), Tikatype's call on *every* app switch multiplied the leak into gigabytes. The switch is now skipped when nothing would change.
+
 ## 1.0.4 — 2026-07-24
 
 ### Fixed

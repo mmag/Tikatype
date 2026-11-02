@@ -34,6 +34,13 @@ final class PerAppLayoutManager {
         guard let target = layouts.first(where: { LayoutManager.sourceID(of: $0) == sourceID }) else {
             return
         }
+        // Selecting an input source that is already active is not a no-op for
+        // the system: every TISSelectInputSource call makes HIToolbox show the
+        // cursor input-source indicator (CursorUIViewService). Skip it when
+        // nothing would change, so app switching doesn't poke that service.
+        if LayoutManager.sourceID(of: LayoutManager.currentLayout) == sourceID {
+            return
+        }
         LayoutManager.switchTo(target)
     }
 }
